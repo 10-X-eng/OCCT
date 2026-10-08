@@ -387,6 +387,8 @@ bool BRepTools_NurbsConvertModification::NewTriangulation(const TopoDS_Face&    
       {
         gp_Pnt2d aUV    = theTri->UVNode(anInd);
         gp_Pnt   aPoint = aSurf->Value(aUV.X(), aUV.Y());
+        // newSurface() returns world geometry; project a world-space point.
+        aPoint.Transform(aLoc.Transformation());
         if (newUV(aPoint, aNewSurf, aTol, aUV))
         {
           theTri->SetUVNode(anInd, aUV);
@@ -496,7 +498,8 @@ bool BRepTools_NurbsConvertModification::NewPolygon(const TopoDS_Edge&          
 
   if (!thePoly->HasParameters())
   {
-    return false;
+    // Preserve the copied polygon when there are no parameters to remap.
+    return true;
   }
   // update parameters of polygon
   double                  aTol = BRep_Tool::Tolerance(theEdge);
@@ -505,7 +508,8 @@ bool BRepTools_NurbsConvertModification::NewPolygon(const TopoDS_Edge&          
   occ::handle<Geom_Curve> aNewCurve = newCurve(myMap, theEdge, aFirst, aLast);
   if (aCurve.IsNull() || aNewCurve.IsNull()) // skip processing degenerated edges
   {
-    return false;
+    // Preserve the copied polygon when there are no parameters to remap.
+    return true;
   }
   NCollection_Array1<double>& aParams = thePoly->ChangeParameters();
   for (int anInd = aParams.Lower(); anInd <= aParams.Upper(); ++anInd)
@@ -960,6 +964,8 @@ bool BRepTools_NurbsConvertModification::NewPolygonOnTriangulation(
         double   aParam = thePoly->Parameter(anInd);
         gp_Pnt2d aUV    = aC2d->Value(aParam);
         gp_Pnt   aPoint = aSurf->Value(aUV.X(), aUV.Y());
+        // newSurface() returns world geometry; project a world-space point.
+        aPoint.Transform(aLoc.Transformation());
         if (newUV(aPoint, aNewSurf, aTol, aUV)
             && newParameter(aUV, aNewC2d, aFirst, aLast, aTol2D, aParam))
         {

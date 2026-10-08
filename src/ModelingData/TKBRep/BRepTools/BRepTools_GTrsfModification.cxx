@@ -27,6 +27,8 @@
 #include <Geom_TrimmedCurve.hxx>
 #include <GeomLib.hxx>
 #include <gp_GTrsf.hxx>
+#include <math_Jacobi.hxx>
+#include <StdFail_NotDone.hxx>
 #include <gp_Pnt.hxx>
 #include <gp_Quaternion.hxx>
 #include <gp_XYZ.hxx>
@@ -43,20 +45,40 @@ IMPLEMENT_STANDARD_RTTIEXT(BRepTools_GTrsfModification, BRepTools_Modification)
 BRepTools_GTrsfModification::BRepTools_GTrsfModification(const gp_GTrsf& T)
     : myGTrsf(T)
 {
-  // use the sup norm as the maximum dilation for the tolerance
-  double loc1, loc2, loc3, loc4;
-
-  loc1 = std::max(std::abs(T.Value(1, 1)), std::abs(T.Value(1, 2)));
-  loc2 = std::max(std::abs(T.Value(2, 1)), std::abs(T.Value(2, 2)));
-  loc3 = std::max(std::abs(T.Value(3, 1)), std::abs(T.Value(3, 2)));
-  loc4 = std::max(std::abs(T.Value(1, 3)), std::abs(T.Value(2, 3)));
-
-  loc1 = std::max(loc1, loc2);
-  loc2 = std::max(loc3, loc4);
-
-  loc1 = std::max(loc1, loc2);
-
-  myGScale = std::max(loc1, std::abs(T.Value(3, 3)));
+  // Tolerances and mesh deflection are Euclidean distances. Their maximum
+  // dilation is the largest singular value, not the largest matrix entry.
+  // Normalize before forming A^T A to handle uniformly extreme scales.
+  double aMaxEntry = 0.0;
+  for (int aRow = 1; aRow <= 3; ++aRow)
+  {
+    for (int aCol = 1; aCol <= 3; ++aCol)
+    {
+      aMaxEntry = std::max(aMaxEntry, std::abs(T.Value(aRow, aCol)));
+    }
+  }
+  myGScale = aMaxEntry;
+  if (aMaxEntry == 0.0)
+  {
+    return;
+  }
+  math_Matrix aGram(1, 3, 1, 3, 0.0);
+  for (int aRow = 1; aRow <= 3; ++aRow)
+  {
+    for (int aCol = aRow; aCol <= 3; ++aCol)
+    {
+      for (int k = 1; k <= 3; ++k)
+      {
+        aGram(aRow, aCol) += (T.Value(k, aRow) / aMaxEntry) * (T.Value(k, aCol) / aMaxEntry);
+      }
+      aGram(aCol, aRow) = aGram(aRow, aCol);
+    }
+  }
+  const math_Jacobi aEigen(aGram);
+  if (!aEigen.IsDone())
+  {
+    throw StdFail_NotDone("BRepTools_GTrsfModification: affine dilation bound");
+  }
+  myGScale *= std::sqrt(std::max(aEigen.Value(1), std::max(aEigen.Value(2), aEigen.Value(3))));
 }
 
 //=================================================================================================
@@ -75,9 +97,8 @@ bool BRepTools_GTrsfModification::NewSurface(const TopoDS_Face&         F,
                                              bool&                      RevWires,
                                              bool&                      RevFace)
 {
-  gp_GTrsf gtrsf;
-  gtrsf.SetVectorialPart(myGTrsf.VectorialPart());
-  gtrsf.SetTranslationPart(myGTrsf.TranslationPart());
+  // Preserve the scale stored separately by non-general gp_GTrsf forms.
+  gp_GTrsf gtrsf(myGTrsf);
   S = BRep_Tool::Surface(F, L);
   if (S.IsNull())
   {
@@ -89,8 +110,10 @@ bool BRepTools_GTrsfModification::NewSurface(const TopoDS_Face&         F,
   Tol = BRep_Tool::Tolerance(F);
   Tol *= myGScale;
   RevWires = false;
-  RevFace  = myGTrsf.IsNegative();
-  S        = occ::down_cast<Geom_Surface>(S->Transformed(L.Transformation()));
+  // gp_GTrsf keeps a separate scale for gp_Trsf forms; its matrix-only
+  // IsNegative() does not include that scale's sign.
+  RevFace = myGTrsf.Form() == gp_Other ? myGTrsf.IsNegative() : myGTrsf.Trsf().IsNegative();
+  S       = occ::down_cast<Geom_Surface>(S->Transformed(L.Transformation()));
 
   occ::handle<Standard_Type> TheTypeS = S->DynamicType();
   if (TheTypeS == STANDARD_TYPE(Geom_BSplineSurface))
@@ -137,10 +160,9 @@ bool BRepTools_GTrsfModification::NewCurve(const TopoDS_Edge&       E,
                                            TopLoc_Location&         L,
                                            double&                  Tol)
 {
-  double   f, l;
-  gp_GTrsf gtrsf;
-  gtrsf.SetVectorialPart(myGTrsf.VectorialPart());
-  gtrsf.SetTranslationPart(myGTrsf.TranslationPart());
+  double f, l;
+  // Preserve the scale stored separately by non-general gp_GTrsf forms.
+  gp_GTrsf gtrsf(myGTrsf);
   Tol = BRep_Tool::Tolerance(E) * myGScale;
   C   = BRep_Tool::Curve(E, L, f, l);
 
@@ -255,12 +277,21 @@ bool BRepTools_GTrsfModification::NewTriangulation(
     return false;
   }
 
-  gp_GTrsf aGTrsf;
-  aGTrsf.SetVectorialPart(myGTrsf.VectorialPart());
-  aGTrsf.SetTranslationPart(myGTrsf.TranslationPart());
+  // Preserve the scale stored separately by non-general gp_GTrsf forms.
+  gp_GTrsf aGTrsf(myGTrsf);
   aGTrsf.Multiply(aLoc.Transformation());
+  // BRepTools_Modifier keeps the result's shape location. Store mesh
+  // coordinates in that local frame, just as NewSurface/NewCurve do.
+  if (!theFace.Location().IsIdentity())
+  {
+    aGTrsf.PreMultiply(theFace.Location().Transformation().Inverted());
+  }
 
   theTriangulation = theTriangulation->Copy();
+  // A general affine deformation need not preserve the generation angle
+  // or the requested linear deflection. Retain the transformed mesh, but do
+  // not advertise its source generation parameters as current precision.
+  theTriangulation->Parameters({});
   theTriangulation->SetCachedMinMax(Bnd_Box()); // clear bounding box
   theTriangulation->Deflection(theTriangulation->Deflection() * std::abs(myGScale));
   // apply transformation to 3D nodes
@@ -285,16 +316,37 @@ bool BRepTools_GTrsfModification::NewTriangulation(
   // modify normals
   if (theTriangulation->HasNormals())
   {
+    // A normal is the cross product of two tangent vectors. Its affine
+    // transform is therefore the cofactor matrix, including reflection sign.
+    // Compute it once per face, rather than constructing a rotation per node.
+    gp_Mat aVectorMat = aGTrsf.VectorialPart();
+    double aMax       = 0.0;
+    for (int aRow = 1; aRow <= 3; ++aRow)
+      for (int aCol = 1; aCol <= 3; ++aCol)
+        aMax = std::max(aMax, std::abs(aVectorMat.Value(aRow, aCol)));
+    // Common scaling does not affect normal direction; avoid overflow or
+    // underflow of cofactors for uniformly large or small transformations.
+    if (aMax > 0.0)
+      for (int aRow = 1; aRow <= 3; ++aRow)
+        for (int aCol = 1; aCol <= 3; ++aCol)
+          aVectorMat.SetValue(aRow, aCol, aVectorMat.Value(aRow, aCol) / aMax);
+    const gp_Mat aNormalMat(aVectorMat.Column(2).Crossed(aVectorMat.Column(3)),
+                            aVectorMat.Column(3).Crossed(aVectorMat.Column(1)),
+                            aVectorMat.Column(1).Crossed(aVectorMat.Column(2)));
     for (int anInd = 1; anInd <= theTriangulation->NbNodes(); ++anInd)
     {
-      gp_Dir aNormal = theTriangulation->Normal(anInd);
-      gp_Mat aMat    = aGTrsf.VectorialPart();
-      aMat.SetDiagonal(1., 1., 1.);
-      gp_Trsf aTrsf;
-      aTrsf.SetForm(gp_Rotation);
-      (gp_Mat&)aTrsf.HVectorialPart() = aMat;
-      aNormal.Transform(aTrsf);
-      theTriangulation->SetNormal(anInd, aNormal);
+      gp_XYZ       aNormal = aNormalMat * theTriangulation->Normal(anInd).XYZ();
+      const double aNormMax =
+        std::max(std::abs(aNormal.X()), std::max(std::abs(aNormal.Y()), std::abs(aNormal.Z())));
+      if (aNormMax == 0.0)
+      {
+        // A singular transform can collapse the tangent plane. There is no
+        // defined normal; retain the transformed mesh without cached normals.
+        theTriangulation->RemoveNormals();
+        break;
+      }
+      aNormal.SetCoord(aNormal.X() / aNormMax, aNormal.Y() / aNormMax, aNormal.Z() / aNormMax);
+      theTriangulation->SetNormal(anInd, gp_Dir(aNormal));
     }
   }
 
@@ -313,10 +365,15 @@ bool BRepTools_GTrsfModification::NewPolygon(const TopoDS_Edge&           theEdg
     return false;
   }
 
-  gp_GTrsf aGTrsf;
-  aGTrsf.SetVectorialPart(myGTrsf.VectorialPart());
-  aGTrsf.SetTranslationPart(myGTrsf.TranslationPart());
+  // Preserve the scale stored separately by non-general gp_GTrsf forms.
+  gp_GTrsf aGTrsf(myGTrsf);
   aGTrsf.Multiply(aLoc.Transformation());
+  // BRepTools_Modifier keeps the result's shape location. Store mesh
+  // coordinates in that local frame, just as NewSurface/NewCurve do.
+  if (!theEdge.Location().IsIdentity())
+  {
+    aGTrsf.PreMultiply(theEdge.Location().Transformation().Inverted());
+  }
 
   thePoly = thePoly->Copy();
   thePoly->Deflection(thePoly->Deflection() * std::abs(myGScale));
