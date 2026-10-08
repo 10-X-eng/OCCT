@@ -136,3 +136,27 @@ TEST(Extrema_ExtCS_LinePlane, ExplicitTrimsExcludeIntersection)
     }
   }
 }
+
+TEST(Extrema_ExtCS_LinePlane, ShortTrimmedCurveKeepsPointAtReportedParameter)
+{
+  // The intersection lies outside the tiny curve interval, so the general
+  // fallback projects its midpoint onto the plane. Its curve point must be
+  // that midpoint, not a default-constructed point at the world origin.
+  GeomAdaptor_Curve   aCurve(new Geom_Line(gp_Lin(gp_Pnt(2, 3, 5), gp_Dir(1, 1, 1))), 0.0, 1e-8);
+  GeomAdaptor_Surface aSurface(new Geom_Plane(gp_Pln(gp_Pnt(), gp_Dir(0, 0, 1))), -20, 20, -20, 20);
+  Extrema_ExtCS       anExtrema(aCurve, aSurface, 1e-9, 1e-9);
+  ASSERT_TRUE(anExtrema.IsDone());
+  ASSERT_FALSE(anExtrema.IsParallel());
+  ASSERT_EQ(anExtrema.NbExt(), 1);
+  Extrema_POnCurv aCurvePoint;
+  Extrema_POnSurf aSurfacePoint;
+  anExtrema.Points(1, aCurvePoint, aSurfacePoint);
+  EXPECT_DOUBLE_EQ(aCurvePoint.Parameter(), 5e-9);
+  EXPECT_LT(aCurvePoint.Value().Distance(aCurve.Value(aCurvePoint.Parameter())), 1e-12);
+  EXPECT_NEAR(aCurvePoint.Value().SquareDistance(aSurfacePoint.Value()),
+              anExtrema.SquareDistance(1),
+              1e-12);
+  double aU, aV;
+  aSurfacePoint.Parameter(aU, aV);
+  EXPECT_LT(aSurfacePoint.Value().Distance(aSurface.Value(aU, aV)), 1e-12);
+}

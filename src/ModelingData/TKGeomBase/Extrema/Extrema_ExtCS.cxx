@@ -247,13 +247,12 @@ void Extrema_ExtCS::Perform(const Adaptor3d_Curve& C, const double Uinf, const d
             {
               int             NbExt = anExtPS.NbExt();
               double          T     = aCPar, U, V;
-              Extrema_POnCurv PC;
               Extrema_POnSurf PS;
               for (i = 1; i <= NbExt; i++)
               {
                 PS = anExtPS.Point(i);
                 PS.Parameter(U, V);
-                AddSolution(C, T, U, V, PC.Value(), PS.Value(), anExtPS.SquareDistance(i));
+                AddSolution(C, T, U, V, aPm, PS.Value(), anExtPS.SquareDistance(i));
               }
             }
             return;
