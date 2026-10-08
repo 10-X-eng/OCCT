@@ -19,6 +19,8 @@
 #include <TopLoc_SListNodeOfItemLocation.hxx>
 #include <TopLoc_SListOfItemLocation.hxx>
 
+#include <utility>
+
 //=================================================================================================
 
 TopLoc_SListOfItemLocation::TopLoc_SListOfItemLocation(const TopLoc_ItemLocation&        anItem,
@@ -37,12 +39,14 @@ TopLoc_SListOfItemLocation::TopLoc_SListOfItemLocation(const TopLoc_ItemLocation
 TopLoc_SListOfItemLocation& TopLoc_SListOfItemLocation::Assign(
   const TopLoc_SListOfItemLocation& Other)
 {
-  if (this == &Other)
+  if (myNode == Other.myNode)
   {
     return *this;
   }
-  Clear();
-  myNode = Other.myNode;
+  // Other can be a tail stored inside our current node. Retain its node
+  // before releasing ours; clearing first leaves Other dangling.
+  occ::handle<TopLoc_SListNodeOfItemLocation> aNode(Other.myNode);
+  myNode = std::move(aNode);
 
   return *this;
 }
