@@ -16,11 +16,33 @@
 #include <Standard_OutOfMemory.hxx>
 
 #include <cmath>
+#include <algorithm>
+#include <cstddef>
+#include <limits>
 
 IMPLEMENT_STANDARD_RTTIEXT(NCollection_IncAllocator, NCollection_BaseAllocator)
 
 namespace
 {
+constexpr size_t THE_ALIGNMENT = alignof(std::max_align_t);
+static_assert((THE_ALIGNMENT & (THE_ALIGNMENT - 1)) == 0);
+constexpr size_t THE_BLOCK_OVERHEAD = sizeof(NCollection_IncAllocator::IBlock) + THE_ALIGNMENT - 1;
+// myBlockSize is unsigned; neither its conversion nor the allocation including
+// the block header may wrap. Round down to leave room for request alignment.
+constexpr size_t THE_MAX_BLOCK_SIZE =
+  std::min(size_t(std::numeric_limits<unsigned>::max()),
+           std::numeric_limits<size_t>::max() - THE_BLOCK_OVERHEAD)
+  & ~(THE_ALIGNMENT - 1);
+
+char* alignedBlockStart(void* theBlock)
+{
+  // Some supported memory managers align the block itself only to a pointer.
+  // Keep its original address for Free(), and align the payload independently.
+  void*  aStart = static_cast<char*>(theBlock) + sizeof(NCollection_IncAllocator::IBlock);
+  size_t aSpace = THE_ALIGNMENT;
+  return static_cast<char*>(std::align(THE_ALIGNMENT, 0, aStart, aSpace));
+}
+
 // Bounds for checking block size level
 // clang-format off
   static constexpr unsigned THE_SMALL_BOUND_BLOCK_SIZE = NCollection_IncAllocator::THE_DEFAULT_BLOCK_SIZE * 16;   // 196 KB
@@ -61,6 +83,10 @@ NCollection_IncAllocator::NCollection_IncAllocator(const size_t theDefaultSize)
     : myBlockSize(static_cast<unsigned>(
         theDefaultSize < THE_MINIMUM_BLOCK_SIZE ? THE_DEFAULT_BLOCK_SIZE : theDefaultSize))
 {
+  if (theDefaultSize > THE_MAX_BLOCK_SIZE)
+  {
+    throw Standard_OutOfMemory("NCollection_IncAllocator: block size exceeds supported range");
+  }
 }
 
 //=================================================================================================
@@ -89,8 +115,13 @@ NCollection_IncAllocator::~NCollection_IncAllocator()
 
 //=================================================================================================
 
-void* NCollection_IncAllocator::AllocateOptimal(const size_t theSize)
+void* NCollection_IncAllocator::AllocateOptimal(const size_t theRequestedSize)
 {
+  if (theRequestedSize > THE_MAX_BLOCK_SIZE)
+  {
+    throw Standard_OutOfMemory("NCollection_IncAllocator: allocation size exceeds supported range");
+  }
+  const size_t theSize = (theRequestedSize + THE_ALIGNMENT - 1) & ~(THE_ALIGNMENT - 1);
   if (myMutex)
   {
     // Fast path: shared lock allows multiple threads to bump-allocate
@@ -139,6 +170,8 @@ void* NCollection_IncAllocator::allocateSlow(const size_t theSize)
   }
   else // Allocate new block from OS.
   {
+    const unsigned aPreviousBlockSize  = myBlockSize;
+    const unsigned aPreviousBlockCount = myBlockCount;
     if (++myBlockCount % 5 == 0)
     {
       increaseBlockSize();
@@ -147,7 +180,23 @@ void* NCollection_IncAllocator::allocateSlow(const size_t theSize)
     {
       myBlockSize = static_cast<unsigned>(theSize);
     }
-    void* aBufferBlock       = Standard::AllocateOptimal(myBlockSize + sizeof(IBlock));
+    void* aBufferBlock = nullptr;
+    try
+    {
+      aBufferBlock = Standard::AllocateOptimal(myBlockSize + THE_BLOCK_OVERHEAD);
+    }
+    catch (...)
+    {
+      myBlockSize  = aPreviousBlockSize;
+      myBlockCount = aPreviousBlockCount;
+      throw;
+    }
+    if (aBufferBlock == nullptr)
+    {
+      myBlockSize  = aPreviousBlockSize;
+      myBlockCount = aPreviousBlockCount;
+      throw Standard_OutOfMemory("NCollection_IncAllocator: block allocation failed");
+    }
     aBlock                   = new (aBufferBlock) IBlock(aBufferBlock, myBlockSize);
     aBlock->NextBlock        = myAllocationHeap;
     aBlock->NextOrderedBlock = myOrderedBlocks;
@@ -252,7 +301,7 @@ void NCollection_IncAllocator::increaseBlockSize()
 
 void NCollection_IncAllocator::resetBlock(IBlock* theBlock) const
 {
-  char*  aBlockStart = reinterpret_cast<char*>(theBlock) + sizeof(IBlock);
+  char*  aBlockStart = alignedBlockStart(theBlock);
   size_t anAvail     = theBlock->AvailableSize.load(std::memory_order_relaxed);
   char*  aCurPtr     = theBlock->CurPointer.load(std::memory_order_relaxed);
   theBlock->AvailableSize.store(anAvail + static_cast<size_t>(aCurPtr - aBlockStart),
@@ -292,7 +341,7 @@ void NCollection_IncAllocator::Reset(const bool theReleaseMemory)
 //=================================================================================================
 
 NCollection_IncAllocator::IBlock::IBlock(void* thePointer, const size_t theSize)
-    : CurPointer(static_cast<char*>(thePointer) + sizeof(IBlock)),
+    : CurPointer(alignedBlockStart(thePointer)),
       AvailableSize(theSize)
 {
 }

@@ -33,11 +33,10 @@
  *  By comparison with  the standard new() and malloc()  calls, this method is
  *  faster and consumes very small additional memory to maintain the heap.
  *
- *  All pointers  returned by Allocate() are  aligned to the size  of the data
- *  type "aligned_t". To  modify the size of memory  blocks requested from the
- *  OS,  use the parameter  of the  constructor (measured  in bytes);  if this
- *  parameter is  smaller than  25 bytes on  32bit or  49 bytes on  64bit, the
- *  block size will be the default 12 kbytes.
+ *  All pointers returned by Allocate() and AllocateOptimal() are aligned to
+ *  alignof(std::max_align_t). To modify the size of memory blocks requested
+ *  from the OS, use the constructor parameter (measured in bytes). Values
+ *  smaller than THE_MINIMUM_BLOCK_SIZE select the default 12 kbytes.
  *
  *  It is not recommended  to use memory blocks  larger than 16KB  on  Windows
  *  platform  for the repeated operations  because  Low Fragmentation Heap  is
@@ -52,6 +51,8 @@ class NCollection_IncAllocator : public NCollection_BaseAllocator
 {
 public:
   //! Constructor.
+  //! Throws Standard_OutOfMemory if the block size cannot be represented by
+  //! the allocator's unsigned block-size field, including alignment/header space.
   //! Note that this constructor does NOT setup mutex for using allocator concurrently from
   //! different threads, see SetThreadSafe() method.
   //!
@@ -68,10 +69,10 @@ public:
   //!          holds a shared_lock on the fast path is undefined behaviour.
   Standard_EXPORT void SetThreadSafe(const bool theIsThreadSafe = true);
 
-  //! Allocate memory with given size. Returns NULL on failure
+  //! Allocate aligned memory with given size. Throws Standard_OutOfMemory on failure.
   Standard_EXPORT void* Allocate(const size_t size) override;
 
-  //! Allocate memory with given size. Returns NULL on failure
+  //! Allocate aligned memory with given size. Throws Standard_OutOfMemory on failure.
   Standard_EXPORT void* AllocateOptimal(const size_t size) override;
 
   //! Free a previously allocated memory. Does nothing
