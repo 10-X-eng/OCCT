@@ -337,6 +337,7 @@ void BRepFill_Evolved::PrivatePerform(const TopoDS_Face&     Spine,
                                       const GeomAbs_JoinType Join,
                                       const bool             Solid)
 {
+  myIsDone = false;
   TopoDS_Shape aLocalShape = Spine.Oriented(TopAbs_FORWARD);
   mySpine                  = TopoDS::Face(aLocalShape);
   //  mySpine    = TopoDS::Face(Spine.Oriented(TopAbs_FORWARD));
@@ -1892,6 +1893,13 @@ void BRepFill_Evolved::Add(BRepFill_Evolved& Vevo, const TopoDS_Wire& Prof, BRep
 
           const NCollection_List<TopoDS_Shape>&    MyList   = myMap(SP)(VV);
           const NCollection_List<TopoDS_Shape>&    VevoList = Vevo.GeneratedShapes(SP, VV);
+          // Gluing requires a one-to-one correspondence. An offset may have
+          // lost a generated edge; advancing both iterators in that case
+          // dereferences an exhausted list or silently leaves edges unglued.
+          if (MyList.Extent() != VevoList.Extent())
+          {
+            throw Standard_ConstructionError("BRepFill_Evolved: incompatible generated edge lists");
+          }
           NCollection_List<TopoDS_Shape>::Iterator MyIte(MyList);
           NCollection_List<TopoDS_Shape>::Iterator VevoIte(VevoList);
           for (; MyIte.More(); MyIte.Next(), VevoIte.Next())
