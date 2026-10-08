@@ -22,6 +22,8 @@
 #include <ElCLib.hxx>
 #include <ElSLib.hxx>
 #include <Extrema_ExtCS.hxx>
+#include <IntAna_IntConicQuad.hxx>
+#include <gp_Pln.hxx>
 #include <Extrema_GenExtCS.hxx>
 #include <Extrema_POnCurv.hxx>
 #include <Extrema_POnSurf.hxx>
@@ -141,6 +143,38 @@ void Extrema_ExtCS::Perform(const Adaptor3d_Curve& C, const double Uinf, const d
           if (myExtElCS.IsParallel())
           {
             break;
+          }
+          {
+            // A transverse line has one zero-distance extremum on a plane.
+            // Keep the generic solver for intersections outside the trimmed
+            // domains or whose reconstructed points are numerically uncertain.
+            const gp_Pln        aPlane = myS->Plane();
+            IntAna_IntConicQuad anIntersection(C.Line(), aPlane, Precision::Angular());
+            if (anIntersection.IsDone() && !anIntersection.IsInQuadric()
+                && anIntersection.NbPoints() == 1)
+            {
+              const double aT = anIntersection.ParamOnConic(1);
+              if (aT >= myucinf && aT <= myucsup)
+              {
+                const gp_Pnt aPC = C.Value(aT);
+                double       aU, aV;
+                ElSLib::Parameters(aPlane, aPC, aU, aV);
+                if (aU >= myuinf && aU <= myusup && aV >= myvinf && aV <= myvsup)
+                {
+                  const gp_Pnt aPS             = myS->Value(aU, aV);
+                  const double aSquareDistance = aPC.SquareDistance(aPS);
+                  const double aTolerance =
+                    std::min(Precision::Confusion(), std::min(mytolC, mytolS));
+                  if (aTolerance > 0.0 && aSquareDistance <= aTolerance * aTolerance
+                      && AddSolution(C, aT, aU, aV, aPC, aPS, aSquareDistance))
+                  {
+                    myDone  = true;
+                    myIsPar = false;
+                    return;
+                  }
+                }
+              }
+            }
           }
           [[fallthrough]];
 
