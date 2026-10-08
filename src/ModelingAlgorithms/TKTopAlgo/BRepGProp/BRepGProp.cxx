@@ -418,6 +418,14 @@ static double volumeProperties(const TopoDS_Shape& S,
 {
   const gp_Pnt P(roughBaryCenter(S));
 
+  if (SkipShared)
+  {
+    // Deduplication is face-based across the entire input. A per-solid cache
+    // cannot account for repeated non-initial placements, different solids
+    // sharing faces, or free faces also contained in a solid.
+    return volumePropertiesFaces(S, Props, P, Eps, true, UseTriangulation);
+  }
+
   // Check for shared solids: if the same TShape appears multiple times
   // (via compound nesting with different locations), we compute properties
   // once per unique solid and reuse via rigid transform for duplicates.
@@ -458,6 +466,12 @@ static double volumeProperties(const TopoDS_Shape& S,
   for (TopExp_Explorer exS(S, TopAbs_SOLID); exS.More(); exS.Next())
   {
     const TopoDS_Shape&                       aSolid = exS.Current();
+    if (aSolid.Orientation() != TopAbs_FORWARD && aSolid.Orientation() != TopAbs_REVERSED)
+    {
+      // Direct face integration ignores INTERNAL/EXTERNAL contributions.
+      // They must neither populate the cache nor negate a cached solid.
+      continue;
+    }
     const opencascade::handle<TopoDS_TShape>& aTS    = aSolid.TShape();
 
     if (aSolidCache.IsBound(aTS))
@@ -465,13 +479,6 @@ static double volumeProperties(const TopoDS_Shape& S,
       // Duplicate instance: transform cached properties.
       const SolidCacheEntry& aCached = aSolidCache(aTS);
       const TopLoc_Location  aRelLoc = aSolid.Location().Multiplied(aCached.Location.Inverted());
-
-      // When SkipShared is enabled, skip exact duplicate instances
-      // (same placement and orientation) - matches original face-level dedup behavior.
-      if (SkipShared && aRelLoc.IsIdentity() && aSolid.Orientation() == aCached.Orientation)
-      {
-        continue;
-      }
 
       // Cache reuse is only valid for rigid (isometric) transforms.
       // Shape locations may contain scaling or negative determinant
