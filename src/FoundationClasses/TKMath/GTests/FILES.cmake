@@ -10,6 +10,7 @@ set(OCCT_TKMath_GTests_FILES
   Bnd_OBB_Test.cxx
   Bnd_Range_Test.cxx
   Bnd_Sphere_Test.cxx
+  BSplCLib_Bohm_Test.cxx
   BSplCLib_Cache_Test.cxx
   BSplCLib_Test.cxx
   BSplSLib_Cache_Test.cxx

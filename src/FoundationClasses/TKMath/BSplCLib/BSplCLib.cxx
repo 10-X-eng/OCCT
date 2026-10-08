@@ -1194,13 +1194,18 @@ void BSplCLib::Derivative(const int Degree,
 
 //=================================================================================================
 
-void BSplCLib::Bohm(const double U,
-                    const int    Degree,
-                    const int    N,
-                    double&      Knots,
-                    const int    Dimension,
-                    double&      Poles)
+namespace
 {
+template <int FixedDegree, int FixedDimension = 0>
+void bohm(const double U,
+          const int    theDegree,
+          const int    N,
+          double&      Knots,
+          const int    theDimension,
+          double&      Poles)
+{
+  const int Degree    = FixedDegree > 0 ? FixedDegree : theDegree;
+  const int Dimension = FixedDimension > 0 ? FixedDimension : theDimension;
   // First phase independent of U, compute the poles of the derivatives
   int     i, j, iDim, min, Dmi, DDmi, jDmi, Degm1;
   double *knot = &Knots, *pole, coef, *tbis, *psav, *psDD, *psDDmDim;
@@ -1547,6 +1552,61 @@ void BSplCLib::Bohm(const double U,
         coef *= Dmi;
       }
     }
+  }
+}
+
+} // namespace
+
+void BSplCLib::Bohm(const double U,
+                    const int    Degree,
+                    const int    N,
+                    double&      Knots,
+                    const int    Dimension,
+                    double&      Poles)
+{
+  // Constant bounds let the compiler simplify the small-degree evaluation
+  // loops without changing the algorithm or floating-point operation order.
+  // Keep the generic implementation for higher degrees to limit code size.
+  switch (Degree)
+  {
+    case 1:
+      return bohm<1>(U, Degree, N, Knots, Dimension, Poles);
+    case 2:
+      return bohm<2>(U, Degree, N, Knots, Dimension, Poles);
+    case 3:
+      return bohm<3>(U, Degree, N, Knots, Dimension, Poles);
+    case 4:
+      return bohm<4>(U, Degree, N, Knots, Dimension, Poles);
+    case 5:
+      return bohm<5>(U, Degree, N, Knots, Dimension, Poles);
+    case 6:
+      return bohm<6>(U, Degree, N, Knots, Dimension, Poles);
+    case 7:
+      return bohm<7>(U, Degree, N, Knots, Dimension, Poles);
+    case 8:
+      return bohm<8>(U, Degree, N, Knots, Dimension, Poles);
+    case 9:
+      return bohm<9>(U, Degree, N, Knots, Dimension, Poles);
+    case 10:
+      return bohm<10>(U, Degree, N, Knots, Dimension, Poles);
+    case 11:
+      return bohm<11>(U, Degree, N, Knots, Dimension, Poles);
+    case 12:
+      return bohm<12>(U, Degree, N, Knots, Dimension, Poles);
+    default:
+      switch (Dimension)
+      {
+        case 1:
+          return bohm<0, 1>(U, Degree, N, Knots, Dimension, Poles);
+        case 2:
+          return bohm<0, 2>(U, Degree, N, Knots, Dimension, Poles);
+        case 3:
+          return bohm<0, 3>(U, Degree, N, Knots, Dimension, Poles);
+        case 4:
+          return bohm<0, 4>(U, Degree, N, Knots, Dimension, Poles);
+        default:
+          return bohm<0>(U, Degree, N, Knots, Dimension, Poles);
+      }
   }
 }
 
