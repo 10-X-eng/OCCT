@@ -113,7 +113,7 @@ public:
   //! Move operator
   handle& operator=(handle&& theHandle) noexcept
   {
-    std::swap(this->entity, theHandle.entity);
+    MoveAssign(theHandle.entity);
     return *this;
   }
 
@@ -195,6 +195,7 @@ public:
   //! For compatibility, define down casting operator from non-base type, as deprecated
   template <class T2>
   Standard_DEPRECATED("down-casting from object of the same or unrelated type is meaningless")
+
   static handle DownCast(
     const handle<T2>& theObject,
     typename opencascade::std::enable_if<!is_base_but_not_same<T2, T>::value, void*>::type = 0)
@@ -205,6 +206,7 @@ public:
   //! For compatibility, define down casting operator from non-base type, as deprecated
   template <class T2>
   Standard_DEPRECATED("down-casting from object of the same or unrelated type is meaningless")
+
   static handle DownCast(
     const T2* thePtr,
     typename opencascade::std::enable_if<!is_base_but_not_same<T2, T>::value, void*>::type = 0)
@@ -266,7 +268,7 @@ public:
   template <class T2, typename = typename std::enable_if<is_base_but_not_same<T, T2>::value>::type>
   handle& operator=(handle<T2>&& theHandle)
   {
-    std::swap(this->entity, theHandle.entity);
+    MoveAssign(theHandle.entity);
     return *this;
   }
 
@@ -330,7 +332,7 @@ public:
   {
     std::enable_if<is_base_but_not_same<T, T2>::value, void*>::type aTypeCheckHelperVar;
     (void)aTypeCheckHelperVar;
-    std::swap(this->entity, theHandle.entity);
+    MoveAssign(theHandle.entity);
     return *this;
   }
 
@@ -354,6 +356,7 @@ public:
   template <class T2>
   Standard_DEPRECATED("Passing non-const reference to handle of base type in function is unsafe; "
                       "use variable of exact type")
+
   operator handle<T2>&()
   {
     // error "type is not a member of enable_if" will be generated if T2 is not sub-type of T
@@ -373,9 +376,23 @@ private:
   {
     if (thePtr == entity)
       return;
+    // The new object can be held by a handle inside the object being released.
+    // Retain it before destroying that owner and its embedded handle.
+    if (thePtr != nullptr)
+      thePtr->IncrementRefCounter();
     EndScope();
     entity = thePtr;
-    BeginScope();
+  }
+
+  //! Transfer ownership before releasing an object that may own the source handle.
+  void MoveAssign(Standard_Transient*& thePtr) noexcept
+  {
+    if (&thePtr == &entity)
+      return;
+    Standard_Transient* aNewPtr = thePtr;
+    thePtr                      = nullptr;
+    EndScope();
+    entity = aNewPtr;
   }
 
   //! Increment reference counter of referred object
